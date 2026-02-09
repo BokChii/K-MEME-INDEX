@@ -1,20 +1,85 @@
 
-import React, { useState } from 'react';
-import { Page } from './types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Page, User, DashboardData } from './types';
 import Home from './views/Home';
 import Analyzer from './views/Analyzer';
 import Community from './views/Community';
-import { KiyoungLogo, COLORS } from './constants';
+import ProfileView from './views/ProfileView';
+import { KiyoungLogo, MOCK_USERS } from './constants';
+import { fetchRealtimeDashboardData } from './services/geminiService';
 
 const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>(Page.HOME);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  
+  // 대시보드 데이터 전역 관리
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<string>('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const updateDashboard = useCallback(async (isSilent = false) => {
+    if (!isSilent) setIsRefreshing(true);
+    else setIsRefreshing(true); // Silent 시에도 작은 인디케이터는 보여줌
+
+    try {
+      const result = await fetchRealtimeDashboardData();
+      setDashboardData(result);
+      const now = new Date();
+      setLastUpdated(`${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`);
+    } catch (error) {
+      console.error("Dashboard update failed:", error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  // 정각 업데이트 타이머 설정
+  useEffect(() => {
+    // 첫 데이터 로드
+    if (!dashboardData) {
+      updateDashboard();
+    }
+
+    const setupHourlyTimer = () => {
+      const now = new Date();
+      const msUntilNextHour = (60 - now.getMinutes()) * 60000 - now.getSeconds() * 1000;
+      
+      return setTimeout(() => {
+        updateDashboard(true); // 정각이 되면 백그라운드에서 업데이트
+        // 그 이후부터는 1시간마다 반복
+        const interval = setInterval(() => updateDashboard(true), 3600000);
+        return () => clearInterval(interval);
+      }, msUntilNextHour);
+    };
+
+    const timerId = setupHourlyTimer();
+    return () => clearTimeout(timerId);
+  }, [dashboardData, updateDashboard]);
+
+  const handleGoToProfile = (userId: string) => {
+    const user = MOCK_USERS[userId] || MOCK_USERS['user1'];
+    setSelectedUser(user);
+    setCurrentPage(Page.PROFILE);
+  };
 
   const renderPage = () => {
     switch (currentPage) {
-      case Page.HOME: return <Home />;
+      case Page.HOME: 
+        return (
+          <Home 
+            data={dashboardData} 
+            lastUpdated={lastUpdated} 
+            isRefreshing={isRefreshing} 
+            onRefresh={() => updateDashboard(false)} 
+          />
+        );
       case Page.ANALYZER: return <Analyzer />;
-      case Page.COMMUNITY: return <Community />;
-      default: return <Home />;
+      case Page.COMMUNITY: return <Community onUserClick={handleGoToProfile} />;
+      case Page.PROFILE: 
+        return selectedUser ? (
+          <ProfileView user={selectedUser} onBack={() => setCurrentPage(Page.COMMUNITY)} />
+        ) : <Community onUserClick={handleGoToProfile} />;
+      default: return <Home data={dashboardData} lastUpdated={lastUpdated} isRefreshing={isRefreshing} onRefresh={() => updateDashboard(false)} />;
     }
   };
 
@@ -29,8 +94,16 @@ const App: React.FC = () => {
           <KiyoungLogo />
           <h1 className="text-2xl font-meme tracking-tighter">K-밈 인덱스</h1>
         </div>
-        <div className="text-[10px] text-red-500 font-bold border border-red-500/30 px-2 py-1 rounded flex items-center gap-1">
-          <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> LIVE
+        <div className="flex items-center gap-3">
+          {isRefreshing && (
+             <div className="flex items-center gap-2 px-3 py-1 bg-zinc-800/50 rounded-full border border-zinc-700 animate-fadeIn">
+               <div className="w-2 h-2 bg-red-500 rounded-full animate-ping"></div>
+               <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Updating...</span>
+             </div>
+          )}
+          <div className="text-[10px] text-red-500 font-bold border border-red-500/30 px-2 py-1 rounded flex items-center gap-1">
+            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> LIVE
+          </div>
         </div>
       </header>
 
@@ -66,7 +139,7 @@ const App: React.FC = () => {
 
           <button 
             onClick={() => setCurrentPage(Page.COMMUNITY)}
-            className={`flex flex-col items-center gap-1 transition-all ${currentPage === Page.COMMUNITY ? 'text-red-500 scale-110' : 'text-zinc-500 hover:text-zinc-300'}`}
+            className={`flex flex-col items-center gap-1 transition-all ${currentPage === Page.COMMUNITY || currentPage === Page.PROFILE ? 'text-red-500 scale-110' : 'text-zinc-500 hover:text-zinc-300'}`}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
